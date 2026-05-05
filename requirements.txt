@@ -1,0 +1,6 @@
+discord.py
+python-dotenv
+beautifulsoup4
+requests
+opencv-python-headless
+numpy
