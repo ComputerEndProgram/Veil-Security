@@ -118,7 +118,3 @@ Verification events are logged to the `LOG_CHANNEL` with:
 - ✅ Fixed OPS 71+ role assignment bug (explicit `level >= 71` check)
 - ✅ Removed voter eligibility system (no longer needed)
 - ✅ Simplified codebase (removed 700+ lines of unused code)
-
-## License
-
-Proprietary - Veil Security Alliance
