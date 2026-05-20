@@ -154,6 +154,39 @@ class SkipStepsView(discord.ui.View):
         log.info(f"[WIZARD] User {self.user_id} restarted verification wizard")
 
 
+class SessionExpiredView(discord.ui.View):
+    """View for expired session with Restart button."""
+    def __init__(self, user_id: int):
+        super().__init__(timeout=None)
+        self.user_id = user_id
+
+    @discord.ui.button(label="🔄 Restart Verification", style=discord.ButtonStyle.green)
+    async def restart_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This is not your verification wizard.", ephemeral=True)
+            return
+        
+        # Initialize new wizard session
+        store.create_wizard_session(self.user_id)
+        log.info(f"[WIZARD] Created new session for user {self.user_id} after timeout")
+        
+        await interaction.response.defer()
+        
+        embed = discord.Embed(
+            title="📋 Step 1: STFC Player Link",
+            description="Please send your https://stfc.pro player profile link.\n\n"
+                        "**Valid formats:**\n"
+                        "- `https://stfc.pro/players/XXXXXXXXXXXXX`\n"
+                        "- `https://stfc.wtf/players/XXXXXXXXXXXXX`\n"
+                        "- Or just the player ID: `XXXXXXXXXXXXX`",
+            colour=discord.Colour.blue(),
+        )
+        embed.set_footer(text="Reply with your link in the next message (session expires in 10 minutes)")
+        
+        await interaction.followup.send(embed=embed, view=SkipStepsView(self.user_id))
+        log.info(f"[WIZARD] Restarted wizard for user {self.user_id}")
+
+
 class ConfirmVerificationView(discord.ui.View):
     """Final confirmation with Complete and Restart buttons."""
     def __init__(self, user_id: int):
@@ -370,7 +403,7 @@ class Store:
     def create_wizard_session(self, user_id: int) -> None:
         """Create a new wizard session for a user."""
         from datetime import datetime, timedelta
-        expires_at = (datetime.now() + timedelta(minutes=5)).isoformat()
+        expires_at = (datetime.now() + timedelta(minutes=10)).isoformat()
         with sqlite3.connect(self.path) as conn:
             conn.execute(
                 """INSERT OR REPLACE INTO wizard_sessions (user_id, step, created_at, expires_at)
@@ -680,6 +713,28 @@ class VeilBot(commands.Bot):
         session = store.get_wizard_session(user_id)
         if not session:
             log.debug(f"[WIZARD] No active session for {user_id}, ignoring message")
+            # Check if there's an expired session to notify user
+            with sqlite3.connect(DB_PATH) as conn:
+                cursor = conn.execute(
+                    "SELECT expires_at FROM wizard_sessions WHERE user_id = ?",
+                    (user_id,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    # Session exists but expired - notify user with restart button
+                    from datetime import datetime
+                    expires_at = datetime.fromisoformat(row[0])
+                    if datetime.now() > expires_at:
+                        conn.execute("DELETE FROM wizard_sessions WHERE user_id = ?", (user_id,))
+                        conn.commit()
+                        
+                        embed = discord.Embed(
+                            title="⏰ Verification Session Expired",
+                            description="Your verification session has expired (10 minute timeout).\n\nClick the button below to start a new verification session.",
+                            colour=discord.Colour.orange(),
+                        )
+                        await message.author.send(embed=embed, view=SessionExpiredView(user_id))
+                        log.info(f"[WIZARD] Notified user {user_id} of session expiration")
             return
         
         log.info(f"[WIZARD] Received DM from {user_id}: '{message.content[:50]}'... (step: {session['step']})")
